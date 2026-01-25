@@ -1,16 +1,7 @@
-import joblib
-
-pipe = joblib.load("best_pipe.pkl")
-
-
-# =========================
-# INSTALL MISSING LIBRARIES
-# =========================
-
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
+import joblib
 import matplotlib.pyplot as plt
 
 from io import BytesIO
@@ -23,42 +14,46 @@ from reportlab.pdfgen import canvas
 # SETTINGS
 # =========================
 st.set_page_config(page_title="Diabetes Screening & Awareness", layout="centered")
-THRESHOLD = 0.4  # your tuned threshold
+
 MODEL_PATH = "best_pipe.pkl"
+THRESHOLD = 0.4
 
 st.title("🩺 Diabetes Risk Screening + Awareness (Sri Lanka)")
 st.caption("Educational screening prototype (not a diagnosis).")
 
 
 # =========================
-# ✅ 1) PUT YOUR REAL TRAINING FEATURES HERE
+# ✅ YOUR REAL FEATURE COLUMNS (from your Excel)
 # =========================
-# How to get this list from notebook:
-# print(X.columns.tolist())
-#
-# Replace the example list below with your exact list.
 FEATURE_COLUMNS = [
-    # ---- EXAMPLE (replace with your real columns) ----
     "Age",
-    "BMI (kg/m²)",
+    "Gender",
+    "Hight(cm)",
+    "Weight(kg)",
+    "Do you have a family history of diabetes?",
+    "How often do you exercise per week?",
+    "How would you describe your diet?",
+    "Have you ever been diagnosed with high blood pressure or cholesterol?",
+    "Do you experience frequent urination?",
+    "Do you often feel unusually thirsty?",
+    "Have you noticed unexplained weight loss or gain?",
+    "Do you feel unusually fatigued or tired?",
+    "Do you have blurred vision or slow-healing wounds?",
+    "Occupation",
+    "Average sleep hours per night",
+    "Waist circumference (cm)",
     "Systolic BP (mmHg)",
     "Diastolic BP (mmHg)",
-    "Waist circumference (cm)",
-    "Family history of diabetes",
-    "Physical activity level",
-    "Smoking status",
-    "Alcohol consumption",
-    "Sleep duration"
+    "BMI (kg/m²)",
 ]
 
 
 # =========================
-# Load pipeline safely
+# Load pipeline (ONLY ONCE)
 # =========================
 @st.cache_resource
 def load_pipe():
-    with open(MODEL_PATH, "rb") as f:
-        return pickle.load(f)
+    return joblib.load(MODEL_PATH)
 
 try:
     pipe = load_pipe()
@@ -77,7 +72,7 @@ def feature_importance_df(pipeline, top_k=12):
         return None
 
     model = pipeline.named_steps.get("model")
-    prep = pipeline.named_steps.get("preprocess") or pipeline.named_steps.get("prep") or pipeline.named_steps.get("preprocessor")
+    prep = pipeline.named_steps.get("preprocess")
 
     if model is None or prep is None:
         return None
@@ -137,26 +132,12 @@ def make_leaflet_pdf(name, risk_prob, risk_label, tips_list):
     y -= 24
 
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(50, y, "Quick Awareness")
-    y -= 18
-
-    c.setFont("Helvetica", 10)
-    for line in [
-        "Type 2 diabetes happens when the body cannot use insulin properly.",
-        "High blood sugar over time can damage heart, kidneys, eyes, and nerves.",
-        "Early screening + lifestyle improvements reduce complications."
-    ]:
-        c.drawString(50, y, f"- {line}")
-        y -= 14
-
-    y -= 10
-    c.setFont("Helvetica-Bold", 12)
     c.drawString(50, y, "Personal Tips (Sri Lanka-friendly)")
     y -= 18
 
     c.setFont("Helvetica", 10)
     tips_list = tips_list or []
-    for tip in tips_list[:10]:
+    for tip in tips_list[:12]:
         if y < 80:
             c.showPage()
             y = h - 60
@@ -204,46 +185,44 @@ with tab1:
 
     name = st.text_input("Name (optional)", value=st.session_state.last_name)
 
-    # Build form for every feature
     st.markdown("### Patient inputs")
+
     user_row = {}
 
-    # Default options
+    # IMPORTANT: Age/Height/Weight are categorical ranges in your data → use selectbox
+    age_opts = ["Below 20", "20 - 29", "30 - 39", "40 - 49", "50 - 59", "60 and above"]
+    height_opts = ["Below 150 cm", "150 - 159 cm", "160 - 169 cm", "170 - 179 cm", "180 cm and above"]
+    weight_opts = ["Below 50 kg", "50 - 59 kg", "60 - 69 kg", "70 - 79 kg", "80 - 89 kg", "90 kg and above"]
+
     yes_no = ["No", "Yes"]
     gender_opts = ["Male", "Female", "Other"]
-    activity_opts = ["Never", "1–2 days/week", "3–5 days/week", "Almost daily"]
-    smoke_opts = ["Never", "Former", "Current"]
-    alcohol_opts = ["No", "Occasionally", "Weekly", "Daily"]
+    exercise_opts = ["Never", "1–2 days/week", "3–5 days/week", "Almost daily"]
+    diet_opts = ["Healthy", "Moderate", "Unhealthy"]
     sleep_opts = ["<6 hours", "6–7 hours", "7–8 hours", "8+ hours"]
 
     for col in FEATURE_COLUMNS:
-        lc = col.lower()
+        if col == "Age":
+            user_row[col] = st.selectbox(col, age_opts)
+        elif col == "Hight(cm)":
+            user_row[col] = st.selectbox(col, height_opts)
+        elif col == "Weight(kg)":
+            user_row[col] = st.selectbox(col, weight_opts)
 
-        # Numeric guessing based on keyword
-        if "age" in lc:
-            user_row[col] = st.number_input(col, 0, 120, 40)
-        elif "bmi" in lc:
-            user_row[col] = st.number_input(col, 5.0, 80.0, 25.0)
-        elif "waist" in lc:
-            user_row[col] = st.number_input(col, 30.0, 200.0, 85.0)
-        elif "systolic" in lc:
-            user_row[col] = st.number_input(col, 60, 250, 120)
-        elif "diastolic" in lc:
-            user_row[col] = st.number_input(col, 30, 150, 80)
-
-        # Categorical guessing
-        elif "gender" in lc or "sex" in lc:
+        elif col == "Gender":
             user_row[col] = st.selectbox(col, gender_opts)
-        elif "physical" in lc or "exercise" in lc or "activity" in lc:
-            user_row[col] = st.selectbox(col, activity_opts)
-        elif "smok" in lc:
-            user_row[col] = st.selectbox(col, smoke_opts)
-        elif "alcohol" in lc:
-            user_row[col] = st.selectbox(col, alcohol_opts)
-        elif "sleep" in lc:
+
+        elif col == "How often do you exercise per week?":
+            user_row[col] = st.selectbox(col, exercise_opts)
+
+        elif col == "How would you describe your diet?":
+            user_row[col] = st.selectbox(col, diet_opts)
+
+        elif col == "Average sleep hours per night":
             user_row[col] = st.selectbox(col, sleep_opts)
 
-        # Default yes/no
+        elif col in ["Waist circumference (cm)", "Systolic BP (mmHg)", "Diastolic BP (mmHg)", "BMI (kg/m²)"]:
+            user_row[col] = st.number_input(col, value=0.0)
+
         else:
             user_row[col] = st.selectbox(col, yes_no)
 
@@ -254,18 +233,18 @@ with tab1:
             prob = float(pipe.predict_proba(X_input)[:, 1][0])
 
             st.session_state.last_prob = prob
+
             if prob >= THRESHOLD:
                 st.session_state.last_label = "Higher Risk"
-                st.error(f"Estimated probability: {prob:.2f}  →  Higher Risk (threshold={THRESHOLD})")
+                st.error(f"Estimated probability: {prob:.2f} → Higher Risk (threshold={THRESHOLD})")
             else:
                 st.session_state.last_label = "Lower Risk"
-                st.success(f"Estimated probability: {prob:.2f}  →  Lower Risk (threshold={THRESHOLD})")
+                st.success(f"Estimated probability: {prob:.2f} → Lower Risk (threshold={THRESHOLD})")
 
-            st.info("If you have thirst, frequent urination, fatigue, blurred vision, or slow healing wounds, please check FBS/HbA1c.")
         except Exception as e:
-            st.error("Prediction failed (feature mismatch).")
+            st.error("Prediction failed.")
             st.code(str(e))
-            st.warning("Fix: FEATURE_COLUMNS must exactly match your training X.columns (same spelling and spacing).")
+            st.warning("This usually happens if the deployed best_pipe.pkl was trained with different column names.")
 
 
 # =========================
@@ -273,8 +252,6 @@ with tab1:
 # =========================
 with tab2:
     st.subheader("Why risk is high?")
-    st.write("Shows which features influence the trained model most.")
-
     imp = feature_importance_df(pipe, top_k=12)
     if imp is None or imp.empty:
         st.warning("Feature importance not available for this model.")
@@ -282,7 +259,6 @@ with tab2:
         fig = plt.figure()
         plt.barh(imp["feature"][::-1], imp["importance"][::-1])
         plt.title("Top features (importance)")
-        plt.xlabel("Importance")
         plt.tight_layout()
         st.pyplot(fig)
 
@@ -292,42 +268,30 @@ with tab2:
 # =========================
 with tab3:
     st.subheader("Awareness Quiz (5 questions)")
-    st.write("Answer quickly — you’ll get personalised tips (Sri Lanka-friendly).")
+    st.write("Answer quickly — you’ll get tips.")
 
-    q1 = st.radio("1) How often do you exercise (at least 30 mins)?", ["Rarely", "1–2 days/week", "3–5 days/week", "Almost daily"])
-    q2 = st.radio("2) Sweet tea / sugary drinks per day?", ["0", "1", "2", "3 or more"])
-    q3 = st.radio("3) Your usual rice portion?", ["Small", "Medium", "Large"])
-    q4 = st.radio("4) Family history of diabetes?", ["No", "Yes"])
-    q5 = st.radio("5) Sleep most nights?", ["<6 hours", "6–7 hours", "7–8 hours", "8+ hours"])
+    q1 = st.radio("Exercise per week?", ["Rarely", "1–2 days/week", "3–5 days/week", "Almost daily"])
+    q2 = st.radio("Sugary drinks per day?", ["0", "1", "2", "3+"])
+    q3 = st.radio("Rice portion?", ["Small", "Medium", "Large"])
+    q4 = st.radio("Family history of diabetes?", ["No", "Yes"])
+    q5 = st.radio("Sleep?", ["<6 hours", "6–7 hours", "7–8 hours", "8+ hours"])
 
     if st.button("Get my tips"):
         tips = []
-
         if q1 in ["Rarely", "1–2 days/week"]:
-            tips.append("Try a 30-minute walk after dinner (5 days/week helps insulin sensitivity).")
-            tips.append("If busy: 10 minutes walk × 3 times/day.")
-
-        if q2 in ["1", "2", "3 or more"]:
-            tips.append("Reduce sweet tea/soft drinks gradually (half sugar → quarter → none).")
-            tips.append("Replace with water or unsweetened drinks (plain tea).")
-
+            tips.append("Try 30 mins walking after dinner 5 days/week.")
+        if q2 != "0":
+            tips.append("Reduce sweet tea/soft drinks slowly (half sugar → none).")
         if q3 == "Large":
-            tips.append("Reduce rice portion and increase vegetables (gotukola, mukunuwenna, beans, cabbage).")
-            tips.append("Try red/brown rice sometimes; portion control still matters.")
-
+            tips.append("Reduce rice portion and add more vegetables (gotukola, mukunuwenna).")
         if q4 == "Yes":
-            tips.append("Family history increases risk: do regular screening (FBS/HbA1c) and maintain healthy waist/weight.")
-
+            tips.append("Family history increases risk: do regular screening (FBS/HbA1c).")
         if q5 == "<6 hours":
-            tips.append("Aim for 7–8 hours sleep. Poor sleep increases cravings and insulin resistance.")
+            tips.append("Aim 7–8 hours sleep to improve insulin sensitivity.")
 
-        tips.append("Add fibre/protein: dhal, chickpeas, eggs, fish, chicken, leafy salads.")
-        tips.append("Snack ideas: roasted gram (kadala), plain yogurt, fruit (portion control), nuts (small portion).")
-        tips.append("If BP is high, reduce salt and follow medical advice.")
-
+        tips.append("Healthy snacks: roasted gram (kadala), plain yogurt, nuts (small portion).")
         st.session_state.last_tips = tips
 
-        st.markdown("### Your Tips")
         for t in tips:
             st.write("•", t)
 
@@ -337,7 +301,6 @@ with tab3:
 # =========================
 with tab4:
     st.subheader("Download Leaflet (PDF)")
-    st.write("Generates a one-page awareness leaflet with your last quiz tips + last risk result.")
 
     leaflet_name = st.text_input("Name on leaflet", value=st.session_state.last_name)
 
@@ -358,15 +321,3 @@ with tab4:
 
 st.divider()
 st.caption("⚠️ Disclaimer: Educational screening tool only. Not a medical diagnosis.")
-
-
-
-import joblib
-
-MODEL_PATH = "best_pipe.pkl"
-
-@st.cache_resource
-def load_model():
-    return joblib.load(MODEL_PATH)
-
-best_pipe = load_model()
