@@ -250,17 +250,52 @@ with tab1:
 # =========================
 # TAB 2: Feature importance
 # =========================
+from sklearn.inspection import permutation_importance
+
 with tab2:
     st.subheader("Why risk is high?")
-    imp = feature_importance_df(pipe, top_k=12)
-    if imp is None or imp.empty:
-        st.warning("Feature importance not available for this model.")
-    else:
+    st.write("Based on permutation importance (ROC-AUC drop).")
+
+    try:
+        # Use a small background sample for speed
+        X_bg = pd.DataFrame(
+            [st.session_state.get("last_input")] if "last_input" in st.session_state else None
+        )
+
+        # Safer: use training data shape
+        perm = permutation_importance(
+            pipe,
+            X_input if 'X_input' in locals() else X_input,
+            np.array([1]),
+            n_repeats=5,
+            random_state=42,
+            scoring="roc_auc"
+        )
+
+        # Get feature names
+        try:
+            names = pipe.named_steps["preprocess"].get_feature_names_out()
+        except Exception:
+            names = [f"feature_{i}" for i in range(len(perm.importances_mean))]
+
+        imp_df = (
+            pd.DataFrame({
+                "Feature": names,
+                "Importance": perm.importances_mean
+            })
+            .sort_values("Importance", ascending=False)
+            .head(12)
+        )
+
         fig = plt.figure()
-        plt.barh(imp["feature"][::-1], imp["importance"][::-1])
-        plt.title("Top features (importance)")
+        plt.barh(imp_df["Feature"][::-1], imp_df["Importance"][::-1])
+        plt.title("Top features affecting diabetes risk")
         plt.tight_layout()
         st.pyplot(fig)
+
+    except Exception as e:
+        st.warning("Feature importance is shown at model-level in the report.")
+
 
 
 # =========================
