@@ -1,7 +1,0 @@
-streamlit
-pandas
-numpy
-matplotlib
-imbalanced-learn
-reportlab
-scikit-learn==1.3.2
