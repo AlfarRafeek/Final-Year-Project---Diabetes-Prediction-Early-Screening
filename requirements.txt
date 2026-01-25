@@ -2,6 +2,8 @@ streamlit
 pandas
 numpy
 matplotlib
-imbalanced-learn
 reportlab
-scikit-learn==1.7.0
+joblib
+openpyxl
+scikit-learn==1.4.2
+imbalanced-learn==0.12.4
