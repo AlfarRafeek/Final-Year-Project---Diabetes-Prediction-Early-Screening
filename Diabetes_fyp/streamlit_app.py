@@ -352,3 +352,19 @@ with tab4:
 
 st.divider()
 st.caption("⚠️ Disclaimer: Educational screening tool only. Not a medical diagnosis.")
+
+
+
+
+
+
+import joblib
+
+MODEL_PATH = "best_pipe.pkl"
+
+@st.cache_resource
+def load_model():
+    return joblib.load(MODEL_PATH)
+
+best_pipe = load_model()
+
