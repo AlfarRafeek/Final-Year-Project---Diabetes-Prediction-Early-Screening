@@ -1,0 +1,7 @@
+streamlit
+pandas
+numpy
+matplotlib
+imbalanced-learn
+reportlab
+scikit-learn==1.7.0
