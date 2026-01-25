@@ -1,3 +1,8 @@
+import joblib
+
+pipe = joblib.load("best_pipe.pkl")
+
+
 # =========================
 # INSTALL MISSING LIBRARIES
 # =========================
