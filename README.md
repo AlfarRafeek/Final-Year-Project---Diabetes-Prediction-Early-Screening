@@ -6,7 +6,6 @@ It is an early screening project of Type 2 Diabetes Mellitus (T2DM) using machin
 
 This essay is a Final Year Project done at the University of Westminster (IIT), Sri Lanka.
 
-
 ## Dataset Description
 The primary data that was collected was collected using the structured survey via Google Forms and is made up of 271 anonymous responses of people of Kattankudy base hospital, Sri Lanka.
 
@@ -20,7 +19,6 @@ The dataset contains 21 attributes which include:
 
 The predictive set of features was reduced to those variables not related to diagnosis in order to avoid leakage of information.
 
-
 ## Machine Learning Models
 Models of supervised machine learning that were tested and trained comprised:
 - Logistic Regression
@@ -31,7 +29,6 @@ Models of supervised machine learning that were tested and trained comprised:
 
 Models training was performed on a reproducible preprocessing pipeline and the performance was compared on the basis of accuracy, recall, ROC-AUC and F1 score.
 
-
 ## Deployment
 A web application based on Streamlit was used to deploy the trained model and allow the user to:
 - Include information about individual health and lifestyle.
@@ -39,7 +36,6 @@ A web application based on Streamlit was used to deploy the trained model and al
 - See descriptions on risk factors.
 - Complete an awareness quiz
 - Store a personalised diabetes awareness leaflet (PDF).
-
 
 ## Repository Structure
 - streamlit_app.py - Streamlit application Python.  
