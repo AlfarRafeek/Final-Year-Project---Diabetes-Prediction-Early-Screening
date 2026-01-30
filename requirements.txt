@@ -1,8 +1,9 @@
-streamlit==1.40.1
-pandas==2.2.3
-numpy==2.1.3
-matplotlib==3.9.2
-scikit-learn==1.5.2
-imbalanced-learn==0.12.3
-openpyxl==3.1.5
-fpdf2==2.7.9
+streamlit
+pandas
+numpy
+scikit-learn
+imbalanced-learn
+matplotlib
+openpyxl
+joblib
+reportlab
