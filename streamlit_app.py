@@ -12,8 +12,8 @@ import plotly.express as px
 import matplotlib.pyplot as plt
 
 # Load saved model and preprocessor
-best_model = joblib.load('best_model.joblib')
-preprocessor = joblib.load('preprocessor.joblib')
+best_model = joblib.load('model/best_model.joblib')
+preprocessor = joblib.load('model/preprocessor.joblib')
 
 # Load comparison results
 results_df = pd.read_csv('model_comparison.csv', index_col=0)
