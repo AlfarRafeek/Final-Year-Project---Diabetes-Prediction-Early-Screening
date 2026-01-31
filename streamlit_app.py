@@ -3,479 +3,415 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from io import BytesIO
-from datetime import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
+from sklearn.feature_selection import mutual_info_classif
+from sklearn.preprocessing import OneHotEncoder
 
-from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score, learning_curve
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
-from sklearn.impute import SimpleImputer
 
-from sklearn.linear_model import LogisticRegression
-from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
-
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
-    confusion_matrix
+# ---------------------------
+# Page settings
+# ---------------------------
+st.set_page_config(
+    page_title="Diabetes Risk Analytics Dashboard (Sri Lanka)",
+    layout="wide"
 )
-from sklearn.inspection import permutation_importance
-from sklearn.calibration import CalibrationDisplay
-from sklearn.metrics import RocCurveDisplay, PrecisionRecallDisplay, brier_score_loss
 
-
-# ----------------------------
-# App setup
-# ----------------------------
-st.set_page_config(page_title="Diabetes Risk Analytics (Sri Lanka)", layout="wide")
 st.title("📊 Diabetes Risk Analytics Dashboard (Sri Lanka)")
-st.caption("Visual analytics dashboard to explore risk patterns and key predictive factors (PPS aligned).")
-st.warning("⚠️ Educational tool only — this is not a medical diagnosis.")
+st.caption("Data analytics dashboard to visualize diabetes risk levels and significant predictive factors (PPS-aligned).")
 
 
-# ----------------------------
-# Column names (match your Google Form export)
-# ----------------------------
+# ---------------------------
+# Constants (match your dataset)
+# ---------------------------
 TARGET_COL = "Have you ever been diagnosed with diabetes?"
-
-LEAKAGE_COLS = [
-    "Are you currently taking any medications for diabetes or related conditions?"
-]
-
-# These symptoms are useful clinically, but if your goal is EARLY screening,
-# they can make the model look better than it really is (because they appear late).
-LATE_SYMPTOMS = [
-    "Do you experience frequent urination?",
-    "Do you often feel unusually thirsty?",
-    "Do you feel unusually fatigued or tired?",
-    "Do you have blurred vision or slow-healing wounds?",
-]
-
-NUMERIC_CANDIDATES = [
-    "Waist circumference (cm)",
-    "Systolic BP (mmHg)",
-    "Diastolic BP (mmHg)",
-    "BMI (kg/m²)",
-]
-
-RANDOM_STATE = 42
+DROP_COLS_IF_EXIST = ["Timestamp"]
 
 
-# ----------------------------
-# Utility functions
-# ----------------------------
-def read_excel_file(file) -> pd.DataFrame:
-    return pd.read_excel(file)
+# ---------------------------
+# Helpers
+# ---------------------------
+def safe_read_excel(uploaded_file):
+    """Read Excel safely (Streamlit Cloud needs openpyxl in requirements.txt)."""
+    return pd.read_excel(uploaded_file, engine="openpyxl")
 
 
-def tidy_columns(df: pd.DataFrame) -> pd.DataFrame:
+def clean_dataset(df: pd.DataFrame) -> pd.DataFrame:
+    """Basic cleaning consistent with your survey."""
     df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = [c.strip() for c in df.columns]
 
-    # Google Forms often has this column
-    if "Timestamp" in df.columns:
-        df = df.drop(columns=["Timestamp"])
-    return df
+    for c in DROP_COLS_IF_EXIST:
+        if c in df.columns:
+            df = df.drop(columns=[c])
 
+    # Standardize target
+    if TARGET_COL in df.columns:
+        df[TARGET_COL] = (
+            df[TARGET_COL].astype(str).str.strip().replace({"Yes": 1, "No": 0})
+        )
+        df = df.dropna(subset=[TARGET_COL])
+        df[TARGET_COL] = df[TARGET_COL].astype(int)
 
-def encode_target(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    if TARGET_COL not in df.columns:
-        return df
-
-    df[TARGET_COL] = (
-        df[TARGET_COL].astype(str).str.strip().map({"Yes": 1, "No": 0})
-    )
-    df = df.dropna(subset=[TARGET_COL])
-    df[TARGET_COL] = df[TARGET_COL].astype(int)
-    return df
-
-
-def convert_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    for col in NUMERIC_CANDIDATES:
+    # Convert true numeric columns (if any come as text)
+    numeric_candidates = [
+        "Waist circumference (cm)",
+        "Systolic BP (mmHg)",
+        "Diastolic BP (mmHg)",
+        "BMI (kg/m²)"
+    ]
+    for col in numeric_candidates:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
     return df
 
 
-def build_rule_risk(df: pd.DataFrame) -> pd.DataFrame:
+def is_numeric_series(s: pd.Series) -> bool:
+    return pd.api.types.is_numeric_dtype(s)
+
+
+def plot_distribution(df, col, title_prefix="Distribution"):
+    """Histogram for numeric; bar chart for categorical."""
+    s = df[col].dropna()
+
+    fig = plt.figure()
+    if is_numeric_series(s):
+        plt.hist(s, bins=20)
+        plt.xlabel(col)
+        plt.ylabel("Frequency")
+    else:
+        vc = s.value_counts().head(15)
+        plt.bar(vc.index.astype(str), vc.values)
+        plt.xticks(rotation=45, ha="right")
+        plt.ylabel("Count")
+
+    plt.title(f"{title_prefix}: {col}")
+    plt.tight_layout()
+    return fig
+
+
+def diabetes_rate_by_group(df, group_col):
+    """Return diabetes rate table by any categorical column."""
+    temp = df[[group_col, TARGET_COL]].dropna()
+    g = temp.groupby(group_col)[TARGET_COL].mean().sort_values(ascending=False)
+    return g
+
+
+def correlation_heatmap_numeric(df):
+    """Correlation heatmap for numeric columns only."""
+    num_df = df.select_dtypes(include=["number"])
+    if num_df.shape[1] < 2:
+        return None
+
+    corr = num_df.corr(numeric_only=True)
+
+    fig = plt.figure()
+    plt.imshow(corr.values)
+    plt.xticks(range(len(corr.columns)), corr.columns, rotation=90)
+    plt.yticks(range(len(corr.index)), corr.index)
+    plt.colorbar()
+    plt.title("Correlation Heatmap (Numeric Features)")
+    plt.tight_layout()
+    return fig
+
+
+def mutual_info_importance(df, top_k=15):
     """
-    Simple rule-based risk score used for analytics visualisation.
-    Not a diagnosis, just a way to group people into Low/Medium/High.
+    Significant factors using Mutual Information (works for mixed types).
+    This is strong for a Data Analytics dashboard: highlights variables linked to diabetes.
     """
-    df = df.copy()
-    required = ["BMI (kg/m²)", "Waist circumference (cm)", "Systolic BP (mmHg)", "Diastolic BP (mmHg)"]
+    if TARGET_COL not in df.columns:
+        return None
 
-    if not all(c in df.columns for c in required):
-        df["Risk Score (rule)"] = np.nan
-        df["Risk Band"] = "Unknown"
-        return df
+    X = df.drop(columns=[TARGET_COL]).copy()
+    y = df[TARGET_COL].copy()
 
-    bmi = df["BMI (kg/m²)"]
-    waist = df["Waist circumference (cm)"]
-    sbp = df["Systolic BP (mmHg)"]
-    dbp = df["Diastolic BP (mmHg)"]
+    # Remove columns that are completely empty
+    X = X.loc[:, X.notna().sum() > 0]
 
-    score = np.zeros(len(df), dtype=float)
-
-    # BMI
-    score += (bmi >= 25).fillna(False).astype(int)
-    score += (bmi >= 30).fillna(False).astype(int)
-
-    # waist (basic threshold for demonstration)
-    score += (waist >= 90).fillna(False).astype(int)
-
-    # BP
-    score += (sbp >= 130).fillna(False).astype(int)
-    score += (dbp >= 85).fillna(False).astype(int)
-
-    df["Risk Score (rule)"] = score
-    df["Risk Band"] = np.where(score <= 1, "Low", np.where(score <= 3, "Medium", "High"))
-    return df
-
-
-def make_preprocessor(X: pd.DataFrame) -> ColumnTransformer:
+    # Separate numeric and categorical
     num_cols = X.select_dtypes(include=["number"]).columns.tolist()
     cat_cols = [c for c in X.columns if c not in num_cols]
 
-    num_pipe = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="median")),
-        ("scaler", StandardScaler()),
-    ])
+    # Fill missing
+    for c in num_cols:
+        X[c] = X[c].fillna(X[c].median())
+    for c in cat_cols:
+        X[c] = X[c].astype(str).fillna("Missing")
 
-    cat_pipe = Pipeline(steps=[
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore")),
-    ])
+    # OneHot for categoricals
+    if len(cat_cols) > 0:
+        ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+        X_cat = ohe.fit_transform(X[cat_cols])
+        cat_names = ohe.get_feature_names_out(cat_cols)
+    else:
+        X_cat = np.zeros((len(X), 0))
+        cat_names = []
 
-    return ColumnTransformer(
-        transformers=[
-            ("num", num_pipe, num_cols),
-            ("cat", cat_pipe, cat_cols),
-        ],
-        remainder="drop"
-    )
+    X_num = X[num_cols].values if len(num_cols) > 0 else np.zeros((len(X), 0))
 
+    X_all = np.hstack([X_num, X_cat])
+    feature_names = list(num_cols) + list(cat_names)
 
-def fig_as_png(fig) -> bytes:
-    buf = BytesIO()
-    fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
-    buf.seek(0)
-    return buf.read()
+    if X_all.shape[1] == 0:
+        return None
 
-
-def generate_leaflet_pdf(summary_lines, tips_lines) -> bytes:
-    buf = BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    _, h = A4
-
-    y = h - 60
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, y, "Diabetes Awareness Leaflet (Sri Lanka)")
-    y -= 22
-
-    c.setFont("Helvetica", 10)
-    c.drawString(50, y, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    y -= 22
-
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(50, y, "Summary")
-    y -= 18
-    c.setFont("Helvetica", 10)
-
-    for line in summary_lines:
-        c.drawString(50, y, f"• {line}")
-        y -= 14
-
-    y -= 10
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(50, y, "Practical Tips")
-    y -= 18
-    c.setFont("Helvetica", 10)
-
-    for tip in tips_lines[:14]:
-        if y < 80:
-            c.showPage()
-            y = h - 60
-            c.setFont("Helvetica", 10)
-        c.drawString(50, y, f"• {tip}")
-        y -= 14
-
-    y -= 10
-    c.setFont("Helvetica-Oblique", 9)
-    c.drawString(50, y, "Disclaimer: Educational tool only. Not a medical diagnosis.")
-    c.save()
-
-    pdf = buf.getvalue()
-    buf.close()
-    return pdf
+    mi = mutual_info_classif(X_all, y, random_state=42)
+    mi_df = pd.DataFrame({"feature": feature_names, "mi": mi}).sort_values("mi", ascending=False)
+    return mi_df.head(top_k)
 
 
-# ----------------------------
-# Sidebar
-# ----------------------------
-st.sidebar.header("Data")
-uploaded = st.sidebar.file_uploader("Upload survey Excel (.xlsx)", type=["xlsx"])
+# ---------------------------
+# Sidebar: data source
+# ---------------------------
+st.sidebar.header("Data Source")
 
-st.sidebar.header("Options")
-remove_leakage = st.sidebar.checkbox("Exclude medication question (avoid leakage)", value=True)
-remove_late_symptoms = st.sidebar.checkbox("Exclude late symptoms (early screening focus)", value=True)
-test_size = st.sidebar.slider("Test size", 0.15, 0.40, 0.25, 0.05)
-threshold = st.sidebar.slider("Decision threshold", 0.20, 0.80, 0.40, 0.05)
+uploaded = st.sidebar.file_uploader("Upload your Excel survey file (.xlsx)", type=["xlsx"])
 
-st.sidebar.caption("If you keep late symptoms, model accuracy can look unrealistically high.")
+st.sidebar.markdown("**Tip:** If Streamlit Cloud shows `openpyxl` error, add it to requirements.txt.")
 
-
-# ----------------------------
-# Load + prep dataset
-# ----------------------------
-if not uploaded:
-    st.info("Upload your Excel file to begin.")
+if uploaded is None:
+    st.info("Upload your **Diabetes Risk Survey (Responses).xlsx** to start.")
     st.stop()
 
-df = read_excel_file(uploaded)
-df = tidy_columns(df)
-df = encode_target(df)
-df = convert_numeric(df)
 
-drop_cols = []
-if remove_leakage:
-    drop_cols += [c for c in LEAKAGE_COLS if c in df.columns]
-if remove_late_symptoms:
-    drop_cols += [c for c in LATE_SYMPTOMS if c in df.columns]
+# ---------------------------
+# Load + clean
+# ---------------------------
+try:
+    df_raw = safe_read_excel(uploaded)
+except Exception as e:
+    st.error("Could not read Excel. On Streamlit Cloud, you must have **openpyxl** installed.")
+    st.code(str(e))
+    st.stop()
 
-df_model = df.drop(columns=drop_cols, errors="ignore")
-df_model = build_rule_risk(df_model)
+df = clean_dataset(df_raw)
 
-if TARGET_COL not in df_model.columns:
+if TARGET_COL not in df.columns:
     st.error(f"Target column not found: {TARGET_COL}")
+    st.write("Columns detected:", list(df.columns))
     st.stop()
 
-X = df_model.drop(columns=[TARGET_COL])
-y = df_model[TARGET_COL].astype(int)
+
+# ---------------------------
+# Sidebar filters
+# ---------------------------
+st.sidebar.header("Filters")
+
+filter_cols = []
+for col in ["Age", "Gender", "Occupation", "How would you describe your diet?"]:
+    if col in df.columns:
+        filter_cols.append(col)
+
+df_f = df.copy()
+
+for col in filter_cols:
+    options = ["All"] + sorted(df_f[col].dropna().astype(str).unique().tolist())
+    selected = st.sidebar.selectbox(f"{col}", options)
+    if selected != "All":
+        df_f = df_f[df_f[col].astype(str) == selected]
 
 
-# ----------------------------
-# Tabs
-# ----------------------------
-tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["Overview", "Data Quality", "Risk Analytics", "Model + Explainability", "Awareness + PDF"]
-)
+# ---------------------------
+# KPIs
+# ---------------------------
+total = len(df_f)
+pos = int(df_f[TARGET_COL].sum())
+neg = int((df_f[TARGET_COL] == 0).sum())
+rate = (pos / total) if total > 0 else 0
 
-# ----------------------------
-# Tab 1: Overview
-# ----------------------------
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Total responses", f"{total}")
+k2.metric("Diabetes (Yes)", f"{pos}")
+k3.metric("No Diabetes", f"{neg}")
+k4.metric("Diabetes rate", f"{rate*100:.1f}%")
+
+
+# ---------------------------
+# Tabs (dashboard layout)
+# ---------------------------
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Overview",
+    "Risk patterns",
+    "Significant factors",
+    "Data quality"
+])
+
+
+# ===========================
+# TAB 1: Overview
+# ===========================
 with tab1:
     st.subheader("Overview")
 
-    a, b, c = st.columns(3)
-    a.metric("Rows", df_model.shape[0])
-    b.metric("Features", X.shape[1])
-    c.metric("Diabetes (Yes)", int((y == 1).sum()))
+    c1, c2 = st.columns(2)
 
-    st.write("Preview:")
-    st.dataframe(df_model.head(10), use_container_width=True)
+    with c1:
+        fig = plt.figure()
+        counts = df_f[TARGET_COL].value_counts().sort_index()
+        plt.bar(["No (0)", "Yes (1)"], [counts.get(0, 0), counts.get(1, 0)])
+        plt.title("Class Distribution (Diabetes target)")
+        plt.ylabel("Count")
+        plt.tight_layout()
+        st.pyplot(fig)
 
-    st.markdown("**Target distribution (Plot 1)**")
-    counts = y.value_counts().sort_index()
-    fig = plt.figure()
-    plt.bar(["No (0)", "Yes (1)"], [counts.get(0, 0), counts.get(1, 0)])
-    plt.ylabel("Count")
-    plt.title("Plot 1: Diabetes class distribution")
-    plt.tight_layout()
-    st.pyplot(fig)
+    with c2:
+        st.markdown("**Preview of filtered dataset**")
+        st.dataframe(df_f.head(20), use_container_width=True)
 
-    st.download_button(
-        "⬇️ Download Plot 1 (PNG)",
-        data=fig_as_png(fig),
-        file_name="plot01_target_distribution.png",
-        mime="image/png"
+    # Distributions (auto numeric/categorical)
+    st.markdown("### Variable distributions (auto chart type)")
+    cols_to_show = [c for c in df_f.columns if c != TARGET_COL]
+    pick = st.multiselect("Choose variables to plot", cols_to_show, default=cols_to_show[:4])
+
+    for col in pick:
+        st.pyplot(plot_distribution(df_f, col))
+
+
+# ===========================
+# TAB 2: Risk patterns (PPS aligned)
+# ===========================
+with tab2:
+    st.subheader("Risk patterns (risk levels + key variables)")
+
+    left, right = st.columns(2)
+
+    # Diabetes rate by Age / Gender / Diet
+    with left:
+        for group_col in ["Age", "Gender", "How would you describe your diet?"]:
+            if group_col in df_f.columns:
+                g = diabetes_rate_by_group(df_f, group_col)
+                fig = plt.figure()
+                plt.bar(g.index.astype(str), g.values)
+                plt.xticks(rotation=45, ha="right")
+                plt.ylim(0, 1)
+                plt.ylabel("Diabetes rate")
+                plt.title(f"Diabetes rate by {group_col}")
+                plt.tight_layout()
+                st.pyplot(fig)
+
+    # Numeric comparisons by class
+    with right:
+        numeric_cols = [c for c in ["BMI (kg/m²)", "Waist circumference (cm)", "Systolic BP (mmHg)", "Diastolic BP (mmHg)"] if c in df_f.columns]
+        if len(numeric_cols) == 0:
+            st.info("No numeric columns found for BMI/Waist/BP comparisons.")
+        else:
+            chosen = st.selectbox("Numeric variable vs diabetes", numeric_cols)
+            fig = plt.figure()
+            # simple boxplot by class
+            data0 = df_f[df_f[TARGET_COL] == 0][chosen].dropna()
+            data1 = df_f[df_f[TARGET_COL] == 1][chosen].dropna()
+            plt.boxplot([data0, data1], labels=["No (0)", "Yes (1)"])
+            plt.title(f"{chosen} by Diabetes status")
+            plt.ylabel(chosen)
+            plt.tight_layout()
+            st.pyplot(fig)
+
+    # Correlation heatmap numeric only
+    st.markdown("### Correlation (numeric only)")
+    fig_corr = correlation_heatmap_numeric(df_f)
+    if fig_corr is None:
+        st.info("Not enough numeric columns for a correlation heatmap.")
+    else:
+        st.pyplot(fig_corr)
+
+    # Symptom prevalence plot
+    st.markdown("### Symptom prevalence (Yes/No) vs Diabetes")
+    symptom_cols = [
+        "Do you experience frequent urination?",
+        "Do you often feel unusually thirsty?",
+        "Have you noticed unexplained weight loss or gain?",
+        "Do you feel unusually fatigued or tired?",
+        "Do you have blurred vision or slow-healing wounds?",
+    ]
+    symptom_cols = [c for c in symptom_cols if c in df_f.columns]
+
+    if len(symptom_cols) == 0:
+        st.info("Symptom columns not found in the uploaded file.")
+    else:
+        # rate of diabetes among those who answered Yes
+        rows = []
+        for c in symptom_cols:
+            sub = df_f[df_f[c].astype(str).str.strip() == "Yes"]
+            if len(sub) > 0:
+                rows.append((c, sub[TARGET_COL].mean(), len(sub)))
+
+        if len(rows) > 0:
+            sym_df = pd.DataFrame(rows, columns=["Symptom", "Diabetes rate (Yes responders)", "N (Yes responders)"])
+            sym_df = sym_df.sort_values("Diabetes rate (Yes responders)", ascending=False)
+
+            fig = plt.figure()
+            plt.barh(sym_df["Symptom"][::-1], sym_df["Diabetes rate (Yes responders)"][::-1])
+            plt.xlabel("Diabetes rate among 'Yes' answers")
+            plt.title("Symptoms associated with higher diabetes rate")
+            plt.tight_layout()
+            st.pyplot(fig)
+            st.dataframe(sym_df, use_container_width=True)
+        else:
+            st.info("No 'Yes' symptom responses found after filtering.")
+
+
+# ===========================
+# TAB 3: Significant factors
+# ===========================
+with tab3:
+    st.subheader("Significant predictive factors (data-driven)")
+    st.write(
+        "This uses **Mutual Information** to estimate which variables are most associated with the diabetes outcome "
+        "(works with mixed categorical + numeric survey data)."
     )
 
-# ----------------------------
-# Tab 2: Data Quality
-# ----------------------------
-with tab2:
-    st.subheader("Data Quality")
+    mi_df = mutual_info_importance(df_f, top_k=15)
 
-    st.markdown("**Missing values (Plot 2)**")
-    missing = df_model.isna().sum().sort_values(ascending=False)
-    top = missing[missing > 0].head(15)
-
-    fig = plt.figure()
-    if top.empty:
-        plt.text(0.1, 0.5, "No missing values found.", fontsize=12)
-        plt.axis("off")
+    if mi_df is None or mi_df.empty:
+        st.warning("Could not compute significant factors (check data after filtering).")
     else:
+        fig = plt.figure()
+        plt.barh(mi_df["feature"][::-1], mi_df["mi"][::-1])
+        plt.xlabel("Mutual Information (higher = stronger association)")
+        plt.title("Top factors linked to diabetes outcome")
+        plt.tight_layout()
+        st.pyplot(fig)
+
+        st.dataframe(mi_df, use_container_width=True)
+
+    st.markdown("### Download cleaned data (for appendix / evidence)")
+    csv = df_f.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download cleaned filtered dataset (CSV)",
+        data=csv,
+        file_name="cleaned_diabetes_survey_filtered.csv",
+        mime="text/csv"
+    )
+
+
+# ===========================
+# TAB 4: Data quality
+# ===========================
+with tab4:
+    st.subheader("Data quality checks")
+
+    # Missing values
+    missing = df_f.isna().sum().sort_values(ascending=False)
+    missing = missing[missing > 0]
+
+    if missing.empty:
+        st.success("No missing values detected in filtered dataset.")
+    else:
+        st.write("Missing values by column:")
+        st.dataframe(missing.reset_index().rename(columns={"index": "Column", 0: "Missing"}), use_container_width=True)
+
+        fig = plt.figure()
+        top = missing.head(15)
         plt.bar(top.index.astype(str), top.values)
         plt.xticks(rotation=75, ha="right")
         plt.ylabel("Missing count")
-        plt.title("Plot 2: Missing values (top columns)")
-        plt.tight_layout()
-    st.pyplot(fig)
-
-    st.markdown("**Numeric distributions (Plots 3–6)**")
-    numeric_cols = [c for c in NUMERIC_CANDIDATES if c in df_model.columns]
-    colA, colB = st.columns(2)
-    plot_no = 3
-
-    for i, col in enumerate(numeric_cols[:4]):
-        vals = pd.to_numeric(df_model[col], errors="coerce").dropna()
-        fig = plt.figure()
-        if vals.empty:
-            plt.text(0.1, 0.5, f"No numeric data for {col}", fontsize=12)
-            plt.axis("off")
-        else:
-            plt.hist(vals, bins=20)
-            plt.title(f"Plot {plot_no}: {col} distribution")
-            plt.xlabel(col)
-            plt.ylabel("Frequency")
-            plt.tight_layout()
-
-        (colA if i % 2 == 0 else colB).pyplot(fig)
-        plot_no += 1
-
-    st.markdown("**Correlation heatmap (numeric only) (Plot 7)**")
-    num_cols = X.select_dtypes(include=["number"]).columns.tolist()
-    if len(num_cols) >= 2:
-        corr = df_model[num_cols].corr(numeric_only=True)
-        fig = plt.figure()
-        plt.imshow(corr.values, aspect="auto")
-        plt.title("Plot 7: Correlation (numeric features)")
-        plt.xticks(range(len(corr.columns)), corr.columns, rotation=90)
-        plt.yticks(range(len(corr.index)), corr.index)
-        plt.colorbar()
+        plt.title("Missing values (top 15 columns)")
         plt.tight_layout()
         st.pyplot(fig)
-    else:
-        st.info("Not enough numeric columns for correlation heatmap.")
 
-# ----------------------------
-# Tab 3: Risk Analytics
-# ----------------------------
-with tab3:
-    st.subheader("Risk Analytics")
-
-    st.markdown("**Risk band distribution (Plot 8)**")
-    bands = df_model["Risk Band"].value_counts()
-    fig = plt.figure()
-    plt.bar(bands.index, bands.values)
-    plt.ylabel("Count")
-    plt.title("Plot 8: Rule-based risk bands")
-    plt.tight_layout()
-    st.pyplot(fig)
-
-    st.markdown("**Risk band vs outcome (Plot 9)**")
-    ct = pd.crosstab(df_model["Risk Band"], df_model[TARGET_COL], normalize="index")
-    fig = plt.figure()
-    x = np.arange(len(ct.index))
-    p0 = ct.get(0, pd.Series([0]*len(ct.index), index=ct.index)).values
-    p1 = ct.get(1, pd.Series([0]*len(ct.index), index=ct.index)).values
-    plt.bar(x, p0, label="No diabetes")
-    plt.bar(x, p1, bottom=p0, label="Diabetes")
-    plt.xticks(x, ct.index)
-    plt.ylabel("Proportion")
-    plt.title("Plot 9: Outcome proportions per risk band")
-    plt.legend()
-    plt.tight_layout()
-    st.pyplot(fig)
-
-# ----------------------------
-# Tab 4: Model + Explainability
-# ----------------------------
-with tab4:
-    st.subheader("Model + Explainability")
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=float(test_size), random_state=RANDOM_STATE, stratify=y
+    st.markdown("### Basic validation notes (for your report)")
+    st.info(
+        "• Categorical ranges (Age/Height/Weight/Sleep) should be visualized as bar charts, not histograms.\n"
+        "• Numeric measurements (BMI/BP/Waist) can be summarized using boxplots and correlation.\n"
+        "• Significant factors are computed from the survey itself (Mutual Information), supporting PPS dashboard goals."
     )
-
-    pre = make_preprocessor(X_train)
-
-    models = {
-        "Logistic Regression": LogisticRegression(max_iter=3000, class_weight="balanced", random_state=RANDOM_STATE),
-        "Random Forest": RandomForestClassifier(n_estimators=400, class_weight="balanced", random_state=RANDOM_STATE, n_jobs=1),
-        "HistGradientBoosting": HistGradientBoostingClassifier(random_state=RANDOM_STATE),
-    }
-
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
-
-    results = []
-    best_pipe, best_name, best_auc = None, None, -1
-
-    for name, model in models.items():
-        pipe = Pipeline([("preprocess", pre), ("model", model)])
-        scores = cross_val_score(pipe, X_train, y_train, cv=cv, scoring="roc_auc")
-        auc_mean = float(scores.mean())
-        auc_std = float(scores.std())
-        results.append((name, auc_mean, auc_std))
-
-        if auc_mean > best_auc:
-            best_auc = auc_mean
-            best_name = name
-            best_pipe = pipe
-
-    res_df = pd.DataFrame(results, columns=["Model", "CV ROC-AUC Mean", "CV ROC-AUC Std"]).sort_values(
-        "CV ROC-AUC Mean", ascending=False
-    )
-    st.write("Cross-validation results:")
-    st.dataframe(res_df, use_container_width=True)
-
-    best_pipe.fit(X_train, y_train)
-    proba = best_pipe.predict_proba(X_test)[:, 1]
-    pred = (proba >= float(threshold)).astype(int)
-
-    metrics = {
-        "Model": best_name,
-        "ROC-AUC": roc_auc_score(y_test, proba),
-        "Accuracy": accuracy_score(y_test, pred),
-        "Precision": precision_score(y_test, pred, zero_division=0),
-        "Recall": recall_score(y_test, pred, zero_division=0),
-        "F1": f1_score(y_test, pred, zero_division=0),
-        "Brier (calibration)": brier_score_loss(y_test, proba),
-    }
-    st.write("Test metrics (with selected threshold):")
-    st.write(pd.DataFrame([metrics]).round(4))
-
-    st.markdown("**Permutation importance (top 12)**")
-    perm = permutation_importance(best_pipe, X_test, y_test, n_repeats=10, random_state=RANDOM_STATE, scoring="roc_auc")
-    perm_df = pd.DataFrame({"Feature": X_test.columns, "Importance": perm.importances_mean}).sort_values(
-        "Importance", ascending=False
-    ).head(12)
-
-    fig = plt.figure()
-    plt.barh(perm_df["Feature"][::-1], perm_df["Importance"][::-1])
-    plt.xlabel("ROC-AUC drop")
-    plt.title("Top drivers (permutation importance)")
-    plt.tight_layout()
-    st.pyplot(fig)
-
-# ----------------------------
-# Tab 5: Awareness + PDF
-# ----------------------------
-with tab5:
-    st.subheader("Awareness + PDF")
-
-    st.write("This part is for simple awareness tips and a PDF leaflet download.")
-
-    name_for_pdf = st.text_input("Name (optional)", value="")
-    tips = ["Maintain healthy diet, regular activity, good sleep, and routine screening."]
-
-    if st.button("Generate PDF leaflet"):
-        summary = [
-            f"Name: {name_for_pdf if name_for_pdf else 'N/A'}",
-            "Tool: Diabetes Risk Analytics Dashboard (Sri Lanka)",
-            "Reminder: Educational tool only. Not a diagnosis."
-        ]
-        pdf = generate_leaflet_pdf(summary, tips)
-        st.download_button(
-            label="⬇️ Download PDF leaflet",
-            data=pdf,
-            file_name="diabetes_awareness_leaflet.pdf",
-            mime="application/pdf"
-        )
-
-st.caption("Academic prototype — built for final year project submission.")
