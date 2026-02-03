@@ -594,3 +594,140 @@ with tab4:
         "• Numeric measurements (BMI/BP/Waist) can be summarized using boxplots and correlation.\n"
         "• Significant factors are computed from the survey itself (Mutual Information), supporting PPS dashboard goals."
     )
+
+# ===========================
+# TAB 5: Awareness + Quiz
+# ===========================
+
+def build_awareness_leaflet(summary_lines, tip_lines):
+    """Creates a simple 1–2 page PDF leaflet (educational use only)."""
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    page_width, page_height = A4
+
+    y = page_height - 60
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(50, y, "Diabetes Awareness Leaflet (Sri Lanka)")
+    y -= 22
+
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(50, y, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    y -= 24
+
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(50, y, "Summary")
+    y -= 18
+    pdf.setFont("Helvetica", 10)
+
+    for line in summary_lines:
+        pdf.drawString(50, y, f"• {line}")
+        y -= 14
+
+    y -= 10
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(50, y, "Personal tips")
+    y -= 18
+    pdf.setFont("Helvetica", 10)
+
+    for tip in tip_lines[:16]:
+        # Move to a new page if needed
+        if y < 80:
+            pdf.showPage()
+            y = page_height - 60
+            pdf.setFont("Helvetica", 10)
+
+        pdf.drawString(50, y, f"• {tip}")
+        y -= 14
+
+    y -= 10
+    pdf.setFont("Helvetica-Oblique", 9)
+    pdf.drawString(50, y, "Disclaimer: This is an educational tool only and not a medical diagnosis.")
+    pdf.save()
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+with tab5:
+    st.subheader("🧠 Awareness Quiz & Prevention Tips")
+    st.caption("Quick lifestyle check + practical advice. For awareness and academic use only.")
+
+    st.markdown("### Short quiz")
+
+    exercise = st.radio("1) How often do you exercise per week?", ["Never", "1–3 times", "3–6 times", "Daily"])
+    sugary_drinks = st.radio("2) How many sugary drinks do you have per day?", ["0", "1", "2", "3+"])
+    rice_size = st.radio("3) Your usual rice portion size:", ["Small", "Medium", "Large"])
+    family_history = st.radio("4) Do you have a family history of diabetes?", ["No", "Yes"])
+    sleep = st.radio("5) Average sleep per night:", ["0–5 hours", "5–6 hours", "6–7 hours", "7–8 hours", "8+ hours"])
+    fried_food = st.radio("6) How often do you eat fried foods?", ["Rarely", "1–2/week", "3–4/week", "Almost daily"])
+    fruits_veg = st.radio("7) Fruits/vegetables per day:", ["<2 portions", "2–3", "4–5", "5+"])
+    bp_check = st.radio("8) How often do you check your blood pressure?", ["Never", "Sometimes", "Yearly", "Often"])
+    stress = st.radio("9) Your stress level:", ["Low", "Moderate", "High"])
+    sitting = st.radio("10) Daily sitting time:", ["<4 hours", "4–6 hours", "6–8 hours", "8+ hours"])
+    smoking = st.radio("11) Do you smoke?", ["No", "Yes"])
+    late_meals = st.radio("12) Do you often eat heavy meals late at night?", ["No", "Yes"])
+
+    # keep tips in session_state so they remain available for PDF download
+    if "awareness_tips" not in st.session_state:
+        st.session_state.awareness_tips = []
+
+    if st.button("Get my tips"):
+        tips = []
+
+        if exercise in ["Never", "1–3 times"]:
+            tips.append("Try to add more movement (e.g., a 30-minute walk daily, or 10 minutes × 3).")
+        if sugary_drinks in ["2", "3+"]:
+            tips.append("Cut down sugary drinks gradually; replace with water or unsweetened options.")
+        if rice_size == "Large":
+            tips.append("Reduce rice portion size and increase vegetables for better balance.")
+        if family_history == "Yes":
+            tips.append("Family history increases risk—consider regular screening (FBS/HbA1c) when appropriate.")
+        if sleep in ["0–5 hours", "5–6 hours"]:
+            tips.append("Aim for 7–8 hours of sleep; poor sleep is linked with higher metabolic risk.")
+        if fried_food in ["3–4/week", "Almost daily"]:
+            tips.append("Limit fried foods where possible; choose boiled/steamed/grilled foods more often.")
+        if fruits_veg in ["<2 portions", "2–3"]:
+            tips.append("Increase fruits/vegetables—try to reach around 4–5 portions per day.")
+        if stress == "High":
+            tips.append("Work on stress management (walking, breathing exercises, hobbies, mindfulness).")
+        if sitting in ["6–8 hours", "8+ hours"]:
+            tips.append("Break up sitting time—stand and move at least once every hour.")
+        if smoking == "Yes":
+            tips.append("Consider quitting smoking; it increases long-term cardiovascular and metabolic risk.")
+        if late_meals == "Yes":
+            tips.append("Try to avoid heavy late dinners; a lighter earlier meal is usually better.")
+
+        # General reminders (always shown)
+        tips.append("If blood pressure is high, reduce salt and follow medical guidance.")
+        tips.append("If you have concerning symptoms, consult a clinician for proper lab testing.")
+
+        st.session_state.awareness_tips = tips
+
+        st.markdown("### ✅ Your personalised tips")
+        for item in tips:
+            st.write("•", item)
+
+    st.divider()
+    st.subheader("⬇️ Download leaflet (PDF)")
+
+    person_name = st.text_input("Name (optional)", value="")
+    if st.button("Generate PDF"):
+        summary = [
+            f"Name: {person_name if person_name else 'N/A'}",
+            f"Filtered dataset size in dashboard: {len(df_f)}",
+            "This leaflet is based on the quiz answers (not a diagnosis)."
+        ]
+
+        tips_for_pdf = st.session_state.awareness_tips
+        if not tips_for_pdf:
+            tips_for_pdf = ["Maintain a healthy diet, stay active, sleep well, and do regular screening if at risk."]
+
+        pdf_bytes = build_awareness_leaflet(summary_lines=summary, tip_lines=tips_for_pdf)
+
+        st.download_button(
+            "⬇️ Download PDF leaflet",
+            data=pdf_bytes,
+            file_name="diabetes_awareness_leaflet.pdf",
+            mime="application/pdf"
+        )
+
