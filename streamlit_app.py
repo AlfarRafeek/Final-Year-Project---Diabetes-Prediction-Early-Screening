@@ -619,11 +619,6 @@ with tab4:
         plt.tight_layout()
         st.pyplot(fig)
 
-    st.markdown("### Notes you can copy into your report")
-    st.info(
-        "• Range-based survey questions (Age/Height/Weight/Sleep) are best shown with bar charts.\n"
-        "• Numeric measures (BMI/BP/Waist) are best summarised using boxplots and correlation.\n"
-        "• Significant factors here are computed directly from the survey dataset (Mutual Information), aligning with your PPS dashboard objective."
     )
 
 
