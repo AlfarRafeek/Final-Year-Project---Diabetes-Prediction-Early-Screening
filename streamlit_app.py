@@ -619,7 +619,6 @@ with tab4:
         plt.tight_layout()
         st.pyplot(fig)
 
-    )
 
 
 # ===========================
